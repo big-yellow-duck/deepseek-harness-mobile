@@ -8,6 +8,8 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -31,6 +33,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.Role
@@ -343,6 +346,46 @@ private fun DocumentPreview(
         }.getOrDefault(false)
     }
     val openFailed = stringResource(R.string.panel_open_host_failed)
+    var downloading by remember(tab) { mutableStateOf(false) }
+    var downloadStatus by remember(tab) { mutableStateOf<String?>(null) }
+    val savedMessage = stringResource(R.string.workspace_download_saved)
+    val failedMessage = stringResource(R.string.workspace_download_failed)
+    val downloadLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream"),
+    ) { uri ->
+        if (uri != null) {
+            downloading = true
+            downloadStatus = null
+            scope.launch {
+                var temp: File? = null
+                try {
+                    val api = store.apiForHost(key.host) ?: error(context.getString(R.string.common_offline))
+                    withContext(Dispatchers.IO) {
+                        // Finish and verify the transfer before opening the destination for writing.
+                        temp = File.createTempFile("workspace-download-", ".tmp", context.cacheDir)
+                        temp!!.outputStream().use {
+                            com.labteto.dshmobile.core.files.copyWorkspaceFile(it) { offset, length ->
+                                api.workspaceFileReadBytes(
+                                    key.sessionId, tab.path,
+                                    WorkspaceByteReadOptions(range = WorkspaceByteRange(offset, length)),
+                                ).requireValue()
+                            }
+                        }
+                        val sink = context.contentResolver.openOutputStream(uri, "wt") ?: error("Cannot open destination")
+                        sink.use { output -> temp!!.inputStream().use { input -> input.copyTo(output) } }
+                    }
+                    downloadStatus = savedMessage
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    downloadStatus = "$failedMessage: ${e.message.orEmpty()}"
+                } finally {
+                    temp?.delete()
+                    downloading = false
+                }
+            }
+        }
+    }
     val extension = tab.path.substringAfterLast('.', "").lowercase()
     val binary = extension in setOf("png", "jpg", "jpeg", "webp", "gif", "pdf")
     fun load(more: Boolean = false) {
@@ -409,6 +452,12 @@ private fun DocumentPreview(
                         }
                     }
                 }
+                DsIconButton(
+                    icon = Icons.Filled.Download,
+                    contentDescription = stringResource(R.string.workspace_download),
+                    onClick = { downloadLauncher.launch(tab.path.substringAfterLast('/').substringAfterLast('\\')) },
+                    enabled = !downloading,
+                )
                 if (canOpenOnHost == true) DsIconButton(
                     icon = FeatherIcons.ExternalLink,
                     contentDescription = stringResource(R.string.panel_open_host),
@@ -431,6 +480,8 @@ private fun DocumentPreview(
                 )
             }
         }
+        if (downloading) LinearProgressIndicator(Modifier.fillMaxWidth(), color = colors.accent, trackColor = colors.borderL1)
+        downloadStatus?.let { Text(it, style = DsType.small13, color = colors.labelPrimary) }
         if (tab.busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = colors.accent, trackColor = colors.borderL1)
         tab.error?.let { Text(it, style = DsType.small13, color = colors.error) }
         when {

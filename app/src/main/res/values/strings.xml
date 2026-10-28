@@ -641,4 +641,7 @@
     <string name="hold_replace_draft_confirm">Replace</string>
     <string name="chatlist_show_all">Show all %1$d</string>
     <string name="chatlist_show_less">Show less</string>
+    <string name="workspace_download">Download file</string>
+    <string name="workspace_download_saved">File saved</string>
+    <string name="workspace_download_failed">Could not download file</string>
 </resources>
